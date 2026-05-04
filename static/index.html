@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Schema-bit-graph CPU</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header>
+    <h1>Schema-bit-graph CPU</h1>
+    <p class="sub">A 4-bit CPU on a relational substrate &mdash;
+      Python plays compiler, interpreter, and interrupt dispatcher.</p>
+  </header>
+
+  <main>
+    <!-- ============================================================ -->
+    <section class="panel" id="state-panel">
+      <h2>state</h2>
+      <div class="row">
+        <div class="card" id="registers">
+          <h3>registers</h3>
+          <table id="reg-table"></table>
+        </div>
+        <div class="card" id="ram">
+          <h3>RAM (16 cells)</h3>
+          <div id="ram-grid"></div>
+          <p class="legend">
+            <span class="swatch handler"></span> handler region (0&ndash;11)
+            <span class="swatch scratch"></span> persistent scratch (12&ndash;15)
+          </p>
+        </div>
+      </div>
+      <button id="btn-reset">reset CPU</button>
+    </section>
+
+    <!-- ============================================================ -->
+    <section class="panel" id="program-panel">
+      <h2>program</h2>
+      <p class="hint">One instruction per line. Format: <code>MNEMONIC OPERAND</code> or just <code>MNEMONIC</code>.</p>
+      <textarea id="program-input" rows="8" spellcheck="false">LDA 14
+ADD 15
+OUT
+HLT</textarea>
+      <h3>data</h3>
+      <p class="hint">Optional. Each line: <code>ADDR=VALUE</code>.</p>
+      <textarea id="data-input" rows="3" spellcheck="false">14=3
+15=4</textarea>
+      <div class="row">
+        <button id="btn-run" class="primary">load &amp; run</button>
+        <span class="examples">
+          examples:
+          <a href="#" data-example="add">3 + 4</a>
+          <a href="#" data-example="sub">5 &minus; 9 (wrap)</a>
+          <a href="#" data-example="loop">countdown loop (JZ)</a>
+          <a href="#" data-example="bitwise">AND mask</a>
+        </span>
+      </div>
+    </section>
+
+    <!-- ============================================================ -->
+    <section class="panel" id="trace-panel">
+      <h2>execution trace</h2>
+      <table id="trace-table">
+        <thead>
+          <tr>
+            <th>cyc</th><th>mnem</th><th>op</th>
+            <th>A&nbsp;before</th><th>A&nbsp;after</th>
+            <th>OUT&nbsp;after</th><th>T-states</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </section>
+
+    <!-- ============================================================ -->
+    <section class="panel" id="events-panel">
+      <h2>events &amp; dispatcher</h2>
+      <p class="hint">Register a chunk as an event handler, then fire events. Registers persist across events; RAM[12&ndash;15] is persistent scratch.</p>
+
+      <div class="row">
+        <div class="card">
+          <h3>register handler</h3>
+          <label>event type <input id="vec-event"   placeholder="tick" /></label>
+          <label>handler chunk <input id="vec-handler" placeholder="counter_inc" /></label>
+          <button id="btn-vector">register</button>
+          <p class="hint">need a chunk first &mdash; click <em>seed counter chunk</em> below.</p>
+          <button id="btn-seed-counter">seed counter chunk + tick handler</button>
+        </div>
+
+        <div class="card">
+          <h3>fire event</h3>
+          <label>event type <input id="ev-event" placeholder="tick" /></label>
+          <button id="btn-fire" class="primary">fire</button>
+        </div>
+      </div>
+
+      <h3>vectors</h3>
+      <table id="vectors-table">
+        <thead><tr><th>event_type</th><th>handler_chunk</th><th>description</th></tr></thead>
+        <tbody></tbody>
+      </table>
+
+      <h3>recent events</h3>
+      <table id="event-log-table">
+        <thead><tr>
+          <th>id</th><th>event</th><th>handler</th>
+          <th>halted</th><th>cycles</th><th>A</th><th>OUT</th><th>error</th>
+        </tr></thead>
+        <tbody></tbody>
+      </table>
+    </section>
+
+    <!-- ============================================================ -->
+    <section class="panel" id="chunks-panel">
+      <h2>chunks catalog</h2>
+      <table id="chunks-table">
+        <thead><tr><th>name</th><th>params</th><th>body</th><th>description</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </section>
+  </main>
+
+  <footer>
+    <p>build artifact of <code>app.py</code> + 9 substrate layers
+    (cpu / mirror / asm / compose / miner / chunk_lab / generalize / equiv / interrupts) +
+    <code>journal.db</code> persistent memory</p>
+  </footer>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,181 @@
+/* ---- minimal demo styling ----------------------------------- */
+:root {
+  --bg:        #0e1116;
+  --fg:        #d6dadf;
+  --muted:    #8a929c;
+  --accent:   #6cb6ff;
+  --accent2:  #f29154;
+  --warn:     #ff7b72;
+  --ok:       #7ee787;
+  --card:     #161b22;
+  --card2:    #20262e;
+  --border:   #2a313a;
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  padding: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI",
+               Roboto, Helvetica, Arial, sans-serif;
+  background: var(--bg);
+  color: var(--fg);
+  line-height: 1.45;
+}
+
+header {
+  padding: 28px 32px 18px;
+  border-bottom: 1px solid var(--border);
+}
+header h1 {
+  margin: 0 0 4px;
+  font-weight: 600;
+  font-size: 26px;
+  letter-spacing: -0.02em;
+}
+header .sub {
+  margin: 0;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+main {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 18px;
+  padding: 24px 32px;
+  max-width: 1100px;
+  margin: 0 auto;
+}
+
+.panel {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 18px 20px;
+}
+.panel h2 {
+  margin: 0 0 12px;
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--accent);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.panel h3 {
+  margin: 16px 0 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.row { display: flex; gap: 16px; flex-wrap: wrap; align-items: flex-start; }
+.row > * { flex: 1; min-width: 240px; }
+
+.card {
+  background: var(--card2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 12px 14px;
+}
+.card label { display: block; font-size: 13px; margin-bottom: 8px; color: var(--muted); }
+.card input { width: 100%; }
+
+textarea, input {
+  width: 100%;
+  background: var(--card2);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 8px 10px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+  resize: vertical;
+}
+input:focus, textarea:focus { outline: none; border-color: var(--accent); }
+
+button {
+  background: var(--card2);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  padding: 8px 14px;
+  border-radius: 4px;
+  font-size: 13px;
+  cursor: pointer;
+  margin-top: 6px;
+}
+button:hover { background: #2a313a; }
+button.primary {
+  background: var(--accent);
+  color: #0e1116;
+  border-color: var(--accent);
+  font-weight: 600;
+}
+button.primary:hover { background: #8ac6ff; }
+
+.examples { color: var(--muted); font-size: 13px; margin-left: 12px; align-self: center; }
+.examples a { color: var(--accent2); margin-right: 10px; text-decoration: none; }
+.examples a:hover { text-decoration: underline; }
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+}
+table th, table td {
+  text-align: left;
+  padding: 5px 10px;
+  border-bottom: 1px solid var(--border);
+}
+table th { color: var(--muted); font-weight: 500; text-transform: uppercase; font-size: 11px; letter-spacing: 0.05em; }
+table tr:hover td { background: rgba(108, 182, 255, 0.05); }
+
+#reg-table td:first-child { color: var(--muted); width: 60px; }
+#reg-table td.changed { color: var(--ok); }
+
+#ram-grid {
+  display: grid;
+  grid-template-columns: repeat(8, 1fr);
+  gap: 4px;
+  margin-bottom: 8px;
+}
+#ram-grid .cell {
+  background: var(--card2);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 6px 4px;
+  text-align: center;
+  font-family: ui-monospace, monospace;
+  font-size: 12px;
+  position: relative;
+}
+#ram-grid .cell .addr {
+  display: block;
+  color: var(--muted);
+  font-size: 10px;
+  margin-bottom: 1px;
+}
+#ram-grid .cell.handler { border-color: rgba(108, 182, 255, 0.4); }
+#ram-grid .cell.scratch { border-color: rgba(242, 145, 84, 0.5); background: rgba(242, 145, 84, 0.05); }
+
+.legend { font-size: 12px; color: var(--muted); margin: 6px 0 0; }
+.swatch { display: inline-block; width: 12px; height: 12px; vertical-align: middle; border-radius: 2px; margin: 0 6px 0 12px; }
+.swatch.handler { background: rgba(108, 182, 255, 0.3); }
+.swatch.scratch { background: rgba(242, 145, 84, 0.3); }
+
+.hint { color: var(--muted); font-size: 13px; margin: 4px 0 8px; }
+code { background: var(--card2); padding: 1px 5px; border-radius: 3px; font-size: 12px; }
+
+footer {
+  text-align: center;
+  padding: 16px;
+  color: var(--muted);
+  font-size: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.error { color: var(--warn); font-family: monospace; }
+.ok    { color: var(--ok); }

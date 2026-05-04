@@ -1,0 +1,22 @@
+# Derived artifacts — regenerated from schema.sql + .py on every run
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# KDE/Dolphin metadata
+.directory
+
+# Editor cruft
+.vscode/
+.idea/
+*.swp
+*~
+
+# OS
+.DS_Store
