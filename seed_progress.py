@@ -81,6 +81,36 @@ PROGRESS = [
      {"calibration_complete": "CountUp.class verified across 9 hand-computed correctness tests",
       "next_step":            "point parser_jvm at Cave Game (rd-132211) for the real-legacy-software stress case; mechanism verified, bigger input should just work"}),
 
+    # ----------- Day 4 -----------
+    ("plan:5day:day4:readme", "shipped",
+     "session_7_2026-05-04 EOD Day 4 (compressed: shipped same session)",
+     {"shipped_evidence": "README.md committed and pushed to https://github.com/everydayquinn/schema-bit-graph; 8 commits on main; public repo; description includes the candidate-as-lead frame ('Self-taught from manual labor.') and the technical claim ('same SQL query works across all three')",
+      "structure": [
+          "Hook — cheat-engine + thesis line",
+          "Self-taught arc — one line, no apology",
+          "The claim — computation as fact-production",
+          "Four-substrate evidence table",
+          "The proof — actual cross-substrate SELECT with actual output",
+          "Cheat-engine framing — generalist legibility",
+          "Architecture — Stage A, six discipline mechanisms",
+          "Reproducing it — single pip dep, exact rebuild commands",
+          "Where this is going — Stage B trajectory",
+          "Why these specific substrates",
+          "How I think about code",
+          "What's NOT in the repo",
+          "Tools used + AI-assistance honesty",
+          "Contact"
+      ],
+      "length":  "~250 lines",
+      "voice":   "third-person where project speaks, first-person where candidate speaks; no 'we' — no team",
+      "github_url": "https://github.com/everydayquinn/schema-bit-graph"}),
+
+    ("plan:5day:day4:web-demo", "planned",
+     "session_7_2026-05-04 — README shipped, web demo deferred",
+     {"current_status": "FastAPI app exists (app.py) — already has 12 tests passing; would need a /substrate-comparison endpoint that runs the cross-substrate query and renders results",
+      "decision_pending": "scrawn call: Day-5 polish, or trajectory? README + GitHub already covers the load-bearing artifact; web demo is nice-to-have for anyone who clones and runs locally",
+      "fallback": "if cut, README's 'Reproducing it' section already documents the SQL query with actual output — that IS the demo, just not interactive"}),
+
     ("stress:cave-game", "probed-tractable",
      "session_6_2026-05-04",
      {"probe_result":     "rd-132211 at https://github.com/thecodeofnotch/rd-132211 (16★, last touched 2021)",
