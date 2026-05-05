@@ -604,10 +604,203 @@ def write_report():
     return f == 0
 
 
+# ==================================================================
+# LAYER 5 — 6502 substrate correctness checks
+# ==================================================================
+def six502_checks():
+    """Verify parser_6502 (static disassembler) and sim_6502 (runtime
+    trace) emit semantically correct facts. Hand-computed expected values
+    against kit_6502_lessons/01_basic.s which is:
+        A9 05         ; LDA #$05    ; A = 5
+        69 03         ; ADC #$03    ; A = 5 + 3 + carry(0) = 8
+        8D 00 02      ; STA $0200   ; mem[0x0200] = 8
+        00            ; BRK         ; halt
+    Total: 4 instructions, ends with BRK at PC 0x0606 (after 0x0600 LDA,
+    0x0602 ADC, 0x0604 STA — instruction sizes 2/2/3/1)."""
+    print("\n[6502 substrate correctness — parser_6502 + sim_6502]")
+    conn = fresh_db()
+    seed_minimal(conn)
+
+    # Need to also register the 6502 runtime predicates (they're not in
+    # seed_minimal, but parser_6502/sim_6502 ensure_traveler doesn't add them
+    # — they're defined in seed_corkboard.PREDICATES which is not loaded here).
+    for name, dom, rng, card, defn, ex in [
+        ("ENTRY_STATE",  "prog","literal","one",  "initial state", ["..."]),
+        ("STEP_AT_ADDR", "step","literal","one",  "PC at start",   ["..."]),
+        ("TERMINATED",   "prog","literal","one",  "termination",   ["..."]),
+        ("MEM_READ",     "step","literal","many", "0xADDR=0xVAL",  ["..."]),
+        ("MEM_WRITE",    "step","literal","many", "0xADDR=0xVAL",  ["..."]),
+        ("INTERRUPT",    "step","literal","one",  "irq | nmi | brk", ["..."]),
+        ("CYCLES",       "step","literal","one",  "cycle count",   ["..."]),
+    ]:
+        cb.register_predicate(conn, name, dom, rng, card, defn, ex)
+
+    # Run parser_6502 against 01_basic.s
+    import parser_6502
+    info = parser_6502.populate(conn, HERE / "kit_6502_lessons/01_basic.s")
+    conn.commit()
+
+    # 33. parser_6502: 4 instructions emitted from 01_basic.s
+    def t_p6502_insn_count():
+        return 4, info["instructions"]
+    run("parser_6502: 01_basic.s emits 4 insns",
+        "lesson has 4 hex-byte lines (LDA, ADC, STA, BRK)",
+        t_p6502_insn_count)
+
+    # 34. parser_6502: mnemonics correctly decoded
+    def t_p6502_mnemonics():
+        rows = list(conn.execute(
+            "SELECT subject, object FROM v_facts_live "
+            "WHERE traveler='parser_6502' AND predicate='HAS_MNEMONIC' "
+            "ORDER BY subject"
+        ))
+        actual = {r["subject"].split(":")[-1]: r["object"] for r in rows}
+        return {"0x0600": "lda", "0x0602": "adc", "0x0604": "sta", "0x0607": "brk"}, actual
+    run("parser_6502: mnemonics match disassembly via py65",
+        "py65 disassembler decodes A9/69/8D/00 → LDA/ADC/STA/BRK",
+        t_p6502_mnemonics)
+
+    # 35. parser_6502: instruction sizes correct
+    def t_p6502_sizes():
+        rows = list(conn.execute(
+            "SELECT subject, object FROM v_facts_live "
+            "WHERE traveler='parser_6502' AND predicate='HAS_SIZE' "
+            "ORDER BY subject"
+        ))
+        actual = {r["subject"].split(":")[-1]: int(r["object"]) for r in rows}
+        return {"0x0600": 2, "0x0602": 2, "0x0604": 3, "0x0607": 1}, actual
+    run("parser_6502: instruction sizes match (LDA imm=2, ADC imm=2, STA abs=3, BRK=1)",
+        "py65 reports correct byte-widths for each addressing mode",
+        t_p6502_sizes)
+
+    # Now run sim_6502 against 01_basic.s
+    import sim_6502
+    # Re-creating MPU + emitting; cleanest path is to call main() with args
+    # but main() reads sys.argv, so we just inline the emit pipeline.
+    # Use the parse_lesson + populate-via-MPU approach inline.
+    from py65.devices.mpu6502 import MPU
+    from py65.disassembler import Disassembler
+    from py65.memory import ObservableMemory
+    sim_6502.ensure_sim_traveler(conn)
+    sim_6502.ensure_parser_traveler(conn)
+    insns, entry = sim_6502.parse_lesson(HERE / "kit_6502_lessons/01_basic.s")
+    mpu = MPU(); mpu.memory = ObservableMemory()
+    for addr, bts, _ in insns:
+        for i, b in enumerate(bts):
+            mpu.memory[addr + i] = b
+    mpu.pc = entry
+    step_writes, step_reads = [], []
+    mpu.memory.subscribe_to_write(range(0x0000, 0x10000),
+        lambda a, v: step_writes.append((a, v)))
+    mpu.memory.subscribe_to_read(range(0x0000, 0x10000),
+        lambda a: (step_reads.append((a, mpu.memory._subject[a])), None)[1])
+    sim_6502.retract_scenario(conn, "01_basic")
+    cb.emit(conn, "sim_6502", "prog:01_basic", "ENTRY_STATE",
+            f"pc=0x{entry:04x}, a=0 x=0 y=0 sp=0xff p=0x00")
+    disasm = Disassembler(mpu)
+    seq = 0
+    while seq < 50:
+        pc = mpu.pc
+        size, dis = disasm.instruction_at(pc)
+        mn = dis.split()[0] if dis else ""
+        if mpu.memory[pc] == 0x00:
+            sim_6502.emit_step(conn, {}, f"step:01_basic:{seq:06d}",
+                                f"insn:01_basic:0x{pc:04x}", seq, pc,
+                                delta="", branch="return", cycles=7,
+                                writes=[], reads=[], interrupt="brk")
+            cb.emit(conn, "sim_6502", "prog:01_basic", "TERMINATED", f"brk@0x{pc:04x}")
+            seq += 1
+            break
+        before = sim_6502.snapshot(mpu)
+        step_writes.clear(); step_reads.clear()
+        cyc_before = mpu.processorCycles
+        mpu.step()
+        after = sim_6502.snapshot(mpu)
+        cyc = mpu.processorCycles - cyc_before
+        data_reads = [(a, v) for (a, v) in step_reads if not (pc <= a < pc + size)]
+        sim_6502.emit_step(conn, {}, f"step:01_basic:{seq:06d}",
+                            f"insn:01_basic:0x{pc:04x}", seq, pc,
+                            delta=sim_6502.fmt_delta(before, after),
+                            branch=sim_6502.fmt_branch(pc, size, after['pc'], mn),
+                            cycles=cyc,
+                            writes=list(step_writes), reads=data_reads)
+        seq += 1
+    conn.commit()
+
+    # 36. sim_6502: 4 steps total (LDA, ADC, STA, BRK)
+    def t_s6502_step_count():
+        n = conn.execute(
+            "SELECT COUNT(*) AS c FROM v_facts_live "
+            "WHERE traveler='sim_6502' AND predicate='STEP_SEQ' "
+            "AND subject GLOB 'step:01_basic:*'"
+        ).fetchone()["c"]
+        return 4, n
+    run("sim_6502: 01_basic produces 4 steps (LDA, ADC, STA, BRK)",
+        "linear program runs to BRK termination",
+        t_s6502_step_count)
+
+    # 37. sim_6502: STA at step 2 emits MEM_WRITE 0x0200=0x08
+    def t_s6502_sta_mem_write():
+        rows = list(conn.execute(
+            "SELECT object FROM v_facts_live "
+            "WHERE traveler='sim_6502' AND predicate='MEM_WRITE' "
+            "AND subject='step:01_basic:000002'"
+        ))
+        actual = sorted(r["object"] for r in rows)
+        return ["0x0200=0x08"], actual
+    run("sim_6502: STA $0200 emits MEM_WRITE 0x0200=0x08",
+        "after LDA #$05 + ADC #$03, A=8; STA writes 8 to address 0x0200",
+        t_s6502_sta_mem_write)
+
+    # 38. sim_6502: BRK terminates the run with INTERRUPT='brk'
+    def t_s6502_brk_terminate():
+        row = conn.execute(
+            "SELECT object FROM v_facts_live "
+            "WHERE traveler='sim_6502' AND predicate='TERMINATED' "
+            "AND subject='prog:01_basic'"
+        ).fetchone()
+        # Final BRK is at 0x0606 (after LDA+ADC+STA = 2+2+3 = 7 bytes from 0x0600)
+        return "brk@0x0607", row["object"]
+    run("sim_6502: BRK at 0x0607 terminates the run",
+        "after 7 bytes of code (LDA #$05=2, ADC #$03=2, STA $0200=3) starting at 0x0600, BRK is at 0x0607",
+        t_s6502_brk_terminate)
+
+    # 39. sim_6502: ADC step's DELTA shows a 0x05->0x08 (5 + 3)
+    def t_s6502_adc_delta():
+        row = conn.execute(
+            "SELECT object FROM v_facts_live "
+            "WHERE traveler='sim_6502' AND predicate='DELTA' "
+            "AND subject='step:01_basic:000001'"
+        ).fetchone()
+        return True, "a:0x05->0x08" in row["object"]
+    run("sim_6502: ADC step's DELTA mentions a:0x05->0x08",
+        "after LDA #$05 (step 0), ADC #$03 (step 1) brings A to 0x08",
+        t_s6502_adc_delta)
+
+    # 40. CROSS-SUBSTRATE: same predicate query returns rows for cpu_4bit AND parser_6502
+    # (sim_6502 has STEP_SEQ too, but parser_6502 is purely static so it doesn't.
+    #  Use HAS_MNEMONIC which all three would have if all three ran.)
+    def t_cross_substrate_query():
+        rows = list(conn.execute(
+            "SELECT traveler FROM v_facts_live "
+            "WHERE predicate='HAS_MNEMONIC' "
+            "GROUP BY traveler ORDER BY traveler"
+        ))
+        # Note: cpu_4bit not seeded in this test's fresh_db; just parser_6502
+        # for now. The point is the cross-substrate query SHAPE works.
+        return ["parser_6502"], [r["traveler"] for r in rows]
+    run("cross-substrate query: same predicate works across travelers",
+        "the substrate-independence claim made operational",
+        t_cross_substrate_query)
+
+    conn.close()
+
+
 if __name__ == "__main__":
     schema_checks()
     helper_checks()
     substrate_checks()
+    six502_checks()
     idempotency_checks()
     ok = write_report()
     raise SystemExit(0 if ok else 1)

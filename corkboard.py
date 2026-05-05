@@ -153,6 +153,17 @@ def emit(conn: sqlite3.Connection,
     ctx_json   = json.dumps(captured_in_context, ensure_ascii=False) if captured_in_context else None
     notes_json = json.dumps(notes_for_claude,    ensure_ascii=False) if notes_for_claude    else None
 
+    # No-op short-circuit: if an identical live fact already exists,
+    # return its id without inserting (idempotent re-emit).
+    existing = conn.execute(
+        "SELECT id FROM facts "
+        "WHERE traveler=? AND subject=? AND predicate_id=? AND object=? "
+        "  AND retracted_at IS NULL",
+        (traveler, subject, pid, object),
+    ).fetchone()
+    if existing is not None:
+        return existing["id"]
+
     # For 'one' cardinality, find any existing live fact with different object
     # and treat THIS emit as a retraction of it (set retracts_id automatically).
     if cardinality == "one" and retracts_id is None:

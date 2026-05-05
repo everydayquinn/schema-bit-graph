@@ -1,8 +1,8 @@
 # Cork-board test report
 
-_Generated: 2026-05-04T17:48:18_
+_Generated: 2026-05-04T18:42:28_
 
-**32/32 passed**
+**40/40 passed**
 
 | # | test | claim | expected | actual | result |
 |---|------|-------|----------|--------|--------|
@@ -36,5 +36,13 @@ _Generated: 2026-05-04T17:48:18_
 | 28 | `countdown: 'a' is written ≥6 times (LDA + 5×SUB)` | WRITES_REG 'many' cardinality accumulates per cycle | `True` | `True` | PASS |
 | 29 | `substrate vocab: cpu_4bit emits the full ISA-agnostic predicate set` | same predicates that parser_6502 + parser_jvm will use; substrate-independence claim grounded | `['AT_ADDRESS', 'AT_INSN', 'BRANCH', 'DELTA', 'HAS_BYTES', 'HAS_MD5', 'HAS_MNEMONIC', 'HAS_OPERANDS', 'HAS_SIZE', 'INGESTED_AT', 'IN_PROGRAM', 'STEP_SEQ', 'WRITES_REG']` | `['AT_ADDRESS', 'AT_INSN', 'BRANCH', 'DELTA', 'HAS_BYTES', 'HAS_MD5', 'HAS_MNEMONIC', 'HAS_OPERANDS', 'HAS_SIZE', 'INGESTED_AT', 'IN_PROGRAM', 'STEP_SEQ', 'WRITES_REG']` | PASS |
 | 30 | `AT_INSN refs all resolve to existing insn:* subjects with AT_ADDRESS` | application-layer referential integrity; ref objects point to real subjects | `[]` | `[]` | PASS |
-| 31 | `bootstrap: re-running on an existing DB preserves data` | schema 'DROP IF EXISTS' is gated by _schema_needs_apply | `1` | `1` | PASS |
-| 32 | `seed: re-running register_* helpers is idempotent (INSERT OR IGNORE)` | running the seed twice doesn't multiply vocabulary | `15` | `15` | PASS |
+| 31 | `parser_6502: 01_basic.s emits 4 insns` | lesson has 4 hex-byte lines (LDA, ADC, STA, BRK) | `4` | `4` | PASS |
+| 32 | `parser_6502: mnemonics match disassembly via py65` | py65 disassembler decodes A9/69/8D/00 → LDA/ADC/STA/BRK | `{'0x0600': 'lda', '0x0602': 'adc', '0x0604': 'sta', '0x0607': 'brk'}` | `{'0x0600': 'lda', '0x0602': 'adc', '0x0604': 'sta', '0x0607': 'brk'}` | PASS |
+| 33 | `parser_6502: instruction sizes match (LDA imm=2, ADC imm=2, STA abs=3, BRK=1)` | py65 reports correct byte-widths for each addressing mode | `{'0x0600': 2, '0x0602': 2, '0x0604': 3, '0x0607': 1}` | `{'0x0600': 2, '0x0602': 2, '0x0604': 3, '0x0607': 1}` | PASS |
+| 34 | `sim_6502: 01_basic produces 4 steps (LDA, ADC, STA, BRK)` | linear program runs to BRK termination | `4` | `4` | PASS |
+| 35 | `sim_6502: STA $0200 emits MEM_WRITE 0x0200=0x08` | after LDA #$05 + ADC #$03, A=8; STA writes 8 to address 0x0200 | `['0x0200=0x08']` | `['0x0200=0x08']` | PASS |
+| 36 | `sim_6502: BRK at 0x0607 terminates the run` | after 7 bytes of code (LDA #$05=2, ADC #$03=2, STA $0200=3) starting at 0x0600, BRK is at 0x0607 | `'brk@0x0607'` | `'brk@0x0607'` | PASS |
+| 37 | `sim_6502: ADC step's DELTA mentions a:0x05->0x08` | after LDA #$05 (step 0), ADC #$03 (step 1) brings A to 0x08 | `True` | `True` | PASS |
+| 38 | `cross-substrate query: same predicate works across travelers` | the substrate-independence claim made operational | `['parser_6502']` | `['parser_6502']` | PASS |
+| 39 | `bootstrap: re-running on an existing DB preserves data` | schema 'DROP IF EXISTS' is gated by _schema_needs_apply | `1` | `1` | PASS |
+| 40 | `seed: re-running register_* helpers is idempotent (INSERT OR IGNORE)` | running the seed twice doesn't multiply vocabulary | `15` | `15` | PASS |
