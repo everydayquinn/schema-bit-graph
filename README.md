@@ -21,6 +21,22 @@ One predicate vocabulary. Four travelers. Three fundamentally different ISA shap
 | `sim_6502`    | 8-bit register machine, runtime        | py65 execution trace. Per-step register diff, memory read/write capture, IRQ injection.                                                  |
 | `parser_jvm`  | JVM stack machine, static              | `javap`-driven bytecode disassembly. `CountUp.java` exercises 7 target opcodes (iconst / iload / istore / iadd / if_icmpge / goto / ireturn). |
 
+## Why the same SQL works on three different ISAs
+
+A 4-bit register machine, an 8-bit register machine, and a JVM stack machine are different architectures. So why does one query return parallel results across all three?
+
+Because the predicates were picked at the level of **what happens**, not **how**.
+
+- `AT_INSN` — *an instruction was executed at this step*
+- `HAS_MNEMONIC` — *this instruction has this textual name*
+- `BRANCH` — *control flow went somewhere (linear / taken:0xHH / return / halt)*
+
+Those describe events that exist on any machine with instructions and control flow. They don't depend on whether you have eight registers or a value stack. They don't care how wide the word is.
+
+Where substrates genuinely diverge, the schema accepts both. `WRITES_REG` only fires for register machines. `STACK_DELTA` only fires for stack machines. They sit alongside each other in the same database; queries focused on the universal predicates work across everything; queries focused on substrate-specific predicates filter naturally.
+
+The result: you don't write three different schemas. You write one, with predicates chosen at the right level of abstraction.
+
 ## The proof
 
 ```sql
@@ -55,9 +71,9 @@ It doesn't simulate. It traces and reveals.
 
 ## Architecture
 
-The cork-board (`corkboard.db`) is one SQLite file: `predicates` (48 named relations with mandatory definitions), `travelers` (7 fact producers), `facts` (the triple store with provenance and supersession), `namespaces` (registered subject prefixes enforced by trigger). 750+ live facts.
+Each traveler emits one row per fact into a SQLite database. The schema enforces a few things directly: predicates have to be registered with a definition before any fact can use them, subjects have to match a registered namespace prefix, and supersession is explicit — no edits, only retractions that link to what they replace.
 
-The schema enforces the discipline directly: predicates must have definitions, subjects must match a registered namespace, no edits — only retraction with explicit links to what's superseded. Future-me reading this database six months from now can't drift on what predicates mean.
+That's the whole architecture. Python coordinates the ingestion. SQL holds the truth.
 
 ## Reproducing it
 
@@ -77,31 +93,31 @@ javac -d kit_jvm_lessons kit_jvm_lessons/src/CountUp.java
 python parser_jvm.py kit_jvm_lessons/CountUp.class
 ```
 
-Then run the cross-substrate query above. Or verify the discipline mechanisms hold:
+Then run the cross-substrate query above. Or run the test suite:
 
 ```bash
-python test_corkboard.py    # 49 tests
-python test_cpu.py          # 31 tests — the 4-bit CPU itself
-# ... 7 more substrate suites + the FastAPI layer = 182 tests total
+python test_corkboard.py    # 49 tests covering schema discipline + substrate facts
+python test_cpu.py          # 31 tests for the 4-bit CPU itself
+# 7 more substrate suites + the FastAPI layer = 182 tests total
 ```
 
-When I miscounted instruction sizes (which happened twice while building this), the test suite caught me.
+The substrate tests encode hand-computed expected facts as assertions, so when the disassembler emits something at the wrong offset (which happened twice during development), the test suite catches it before it ships.
 
 ## Where this is going
 
-- **More substrates.** Python bytecode, WebAssembly, x86 via capstone. Each tests the predicate vocabulary against a different execution model. The architecture is locked; substrates are stress tests.
-- **Schema-gate replay.** A small script that reconstructs execution from the cork-board's facts alone. If replay matches the original run, the schema is empirically complete. Falsifiability for the whole thesis.
+- **More substrates.** Python bytecode, WebAssembly, x86 via capstone. Each tests the predicate vocabulary against a different execution model.
+- **Schema-gate replay.** A small script that reconstructs execution from the database alone. If replay matches the original run, the schema is empirically complete. Falsifiability for the whole thesis.
 
 ## How I think about code
 
 SQL is the load-bearing substrate — deterministic, queryable, durable. Python is the interface. The schema isn't just storage; the schema is the program.
 
-## Tools used
+## Tools
 
 - [py65](https://github.com/mnaberez/py65) — 6502 simulator (MIT)
 - [`javap`](https://docs.oracle.com/en/java/javase/26/docs/specs/man/javap.html) — JVM bytecode disassembler (ships with the JDK)
 - SQLite — bundled with Python
-- AI assistance for tedium and second opinions; commit messages name which sessions did what.
+- AI assistance for tedium and second opinions.
 
 ## Contact
 
