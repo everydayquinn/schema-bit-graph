@@ -1,8 +1,8 @@
 # Cork-board test report
 
-_Generated: 2026-05-04T18:42:28_
+_Generated: 2026-05-04T19:11:32_
 
-**40/40 passed**
+**49/49 passed**
 
 | # | test | claim | expected | actual | result |
 |---|------|-------|----------|--------|--------|
@@ -44,5 +44,14 @@ _Generated: 2026-05-04T18:42:28_
 | 36 | `sim_6502: BRK at 0x0607 terminates the run` | after 7 bytes of code (LDA #$05=2, ADC #$03=2, STA $0200=3) starting at 0x0600, BRK is at 0x0607 | `'brk@0x0607'` | `'brk@0x0607'` | PASS |
 | 37 | `sim_6502: ADC step's DELTA mentions a:0x05->0x08` | after LDA #$05 (step 0), ADC #$03 (step 1) brings A to 0x08 | `True` | `True` | PASS |
 | 38 | `cross-substrate query: same predicate works across travelers` | the substrate-independence claim made operational | `['parser_6502']` | `['parser_6502']` | PASS |
-| 39 | `bootstrap: re-running on an existing DB preserves data` | schema 'DROP IF EXISTS' is gated by _schema_needs_apply | `1` | `1` | PASS |
-| 40 | `seed: re-running register_* helpers is idempotent (INSERT OR IGNORE)` | running the seed twice doesn't multiply vocabulary | `15` | `15` | PASS |
+| 39 | `parser_jvm: countTo() has exactly 18 instructions` | loop body 13 + setup 4 (iconst_0/istore_1/iconst_0/istore_2) + condition 3 (iload_2/iload_0/if_icmpge) + return-prep+return 2 (iload_1/ireturn) = 18 (verified via javap; sum of opcode distribution in test 42 also = 18) | `18` | `18` | PASS |
+| 40 | `parser_jvm: countTo() opcode counts exactly match javap output` | 11 distinct opcodes summing to 17 instructions | `{'iconst_0': 2, 'iconst_1': 1, 'istore_1': 2, 'istore_2': 2, 'iload_0': 1, 'iload_1': 2, 'iload_2': 3, 'iadd': 2, 'if_icmpge': 1, 'goto': 1, 'ireturn': 1}` | `{'goto': 1, 'iadd': 2, 'iconst_0': 2, 'iconst_1': 1, 'if_icmpge': 1, 'iload_0': 1, 'iload_1': 2, 'iload_2': 3, 'ireturn': 1, 'istore_1': 2, 'istore_2': 2}` | PASS |
+| 41 | `parser_jvm: iadd STACK_DELTA is '-2+1' at both occurrences` | iadd pops two ints and pushes one (the sum) | `[('insn:CountUp:countTo:11', '-2+1'), ('insn:CountUp:countTo:15', '-2+1')]` | `[('insn:CountUp:countTo:11', '-2+1'), ('insn:CountUp:countTo:15', '-2+1')]` | PASS |
+| 42 | `parser_jvm: BRANCH semantics exactly match for if_icmpge / goto / ireturn` | loop control flow encoded with target offsets and branch kind | `{'insn:CountUp:countTo:6': 'conditional:20', 'insn:CountUp:countTo:17': 'unconditional:4', 'insn:CountUp:countTo:21': 'return'}` | `{'insn:CountUp:countTo:6': 'conditional:20', 'insn:CountUp:countTo:17': 'unconditional:4', 'insn:CountUp:countTo:21': 'return'}` | PASS |
+| 43 | `parser_jvm: WRITES_LOCAL fires at the 4 istore_N sites with correct slots` | loop body writes sum (slot 1) and i (slot 2) at each iteration | `[('insn:CountUp:countTo:1', '1'), ('insn:CountUp:countTo:12', '1'), ('insn:CountUp:countTo:16', '2'), ('insn:CountUp:countTo:3', '2')]` | `[('insn:CountUp:countTo:1', '1'), ('insn:CountUp:countTo:12', '1'), ('insn:CountUp:countTo:16', '2'), ('insn:CountUp:countTo:3', '2')]` | PASS |
+| 44 | `parser_jvm: READS_LOCAL fires at the 6 iload_N sites with correct slots` | loop body reads n (slot 0), sum (slot 1), i (slot 2) | `[('insn:CountUp:countTo:10', '2'), ('insn:CountUp:countTo:13', '2'), ('insn:CountUp:countTo:20', '1'), ('insn:CountUp:countTo:4', '2'), ('insn:CountUp:countTo:5', '0'), ('insn:CountUp:countTo:9', '1')` | `[('insn:CountUp:countTo:10', '2'), ('insn:CountUp:countTo:13', '2'), ('insn:CountUp:countTo:20', '1'), ('insn:CountUp:countTo:4', '2'), ('insn:CountUp:countTo:5', '0'), ('insn:CountUp:countTo:9', '1')` | PASS |
+| 45 | `parser_jvm: every STACK_DELTA parses as signed-counts string (or '0')` | format invariant: '+N' / '-N' / sequences thereof / '0' | `[]` | `[]` | PASS |
+| 46 | `parser_jvm: every countTo insn links to method 'CountUp.countTo' via IN_METHOD` | method nesting captured even though encoded in subject | `18` | `18` | PASS |
+| 47 | `cross-substrate: HAS_MNEMONIC appears for all 3 travelers (cpu_4bit + parser_6502 + parser_jvm)` | the same predicate vocabulary works across 4-bit register / 8-bit register / JVM stack — substrate-independence empirically verified | `['cpu_4bit', 'parser_6502', 'parser_jvm']` | `['cpu_4bit', 'parser_6502', 'parser_jvm']` | PASS |
+| 48 | `bootstrap: re-running on an existing DB preserves data` | schema 'DROP IF EXISTS' is gated by _schema_needs_apply | `1` | `1` | PASS |
+| 49 | `seed: re-running register_* helpers is idempotent (INSERT OR IGNORE)` | running the seed twice doesn't multiply vocabulary | `15` | `15` | PASS |

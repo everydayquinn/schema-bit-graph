@@ -163,6 +163,16 @@ PREDICATES = [
      "cycle count consumed by this step (CPU-clock cycles, not host clock)",
      ["step:01_basic:000000 CYCLES 2"]),
 
+    # ---- Static-analysis substrate predicates (parser_jvm and similar)
+    ("STACK_DELTA",     "insn", "literal", "one",
+     "static stack-effect annotation: pushes/pops as signed-counts string (e.g. '-2+1' for iadd, '+1' for iconst, '-1' for istore, '0' for goto)",
+     ["insn:CountUp:countTo:11 STACK_DELTA -2+1",
+      "insn:CountUp:countTo:0 STACK_DELTA +1",
+      "insn:CountUp:countTo:17 STACK_DELTA 0"]),
+    ("IN_METHOD",       "insn", "literal", "one",
+     "method this instruction belongs to (class.method form for JVM)",
+     ["insn:CountUp:countTo:0 IN_METHOD CountUp.countTo"]),
+
     # ---- Gameplan layer ----
     ("ROADMAP_TITLE",   "plan", "literal", "one",
      "short human-readable title for a plan deliverable",

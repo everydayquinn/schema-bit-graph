@@ -1,6 +1,6 @@
 # interrupts.py test report  (slice 9 — the dispatcher)
 
-_Generated: 2026-05-04T18:35:56_
+_Generated: 2026-05-04T19:13:14_
 
 **11/11 passed**
 

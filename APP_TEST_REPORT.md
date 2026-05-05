@@ -1,6 +1,6 @@
 # app.py test report  (slice 10 — FastAPI wrapper)
 
-_Generated: 2026-05-04T18:37:08_
+_Generated: 2026-05-04T19:14:45_
 
 **12/12 passed**
 

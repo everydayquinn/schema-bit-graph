@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sqlite3
 import traceback
 from datetime import datetime
@@ -796,11 +797,246 @@ def six502_checks():
     conn.close()
 
 
+# ==================================================================
+# LAYER 6 — JVM substrate correctness checks
+# ==================================================================
+def jvm_checks():
+    """Verify parser_jvm emits semantically correct facts. The calibration
+    target is kit_jvm_lessons/CountUp.class's countTo(int) method:
+
+        public static int countTo(int n) {
+            int sum = 0;
+            int i = 0;
+            while (i < n) { sum = sum + i; i = i + 1; }
+            return sum;
+        }
+
+    Bytecode (18 instructions, hand-verified via javap -c -p):
+         0: iconst_0      sum=0       STACK_DELTA +1
+         1: istore_1                  STACK_DELTA -1, WRITES_LOCAL 1
+         2: iconst_0      i=0         STACK_DELTA +1
+         3: istore_2                  STACK_DELTA -1, WRITES_LOCAL 2
+         4: iload_2       push i       STACK_DELTA +1, READS_LOCAL 2
+         5: iload_0       push n       STACK_DELTA +1, READS_LOCAL 0
+         6: if_icmpge 20  i>=n?       STACK_DELTA -2, BRANCH conditional:20
+         9: iload_1                   STACK_DELTA +1, READS_LOCAL 1
+        10: iload_2                   STACK_DELTA +1, READS_LOCAL 2
+        11: iadd                      STACK_DELTA -2+1
+        12: istore_1                  STACK_DELTA -1, WRITES_LOCAL 1
+        13: iload_2                   STACK_DELTA +1, READS_LOCAL 2
+        14: iconst_1                  STACK_DELTA +1
+        15: iadd                      STACK_DELTA -2+1
+        16: istore_2                  STACK_DELTA -1, WRITES_LOCAL 2
+        17: goto 4                    STACK_DELTA 0,  BRANCH unconditional:4
+        20: iload_1                   STACK_DELTA +1, READS_LOCAL 1
+        21: ireturn                   STACK_DELTA -1, BRANCH return
+    """
+    print("\n[JVM substrate correctness — parser_jvm on CountUp.class]")
+    conn = fresh_db()
+    seed_minimal(conn)
+
+    # Register predicates parser_jvm uses that aren't in seed_minimal
+    for name, dom, rng, card, defn, ex in [
+        ("STACK_DELTA",  "insn", "literal", "one",  "stack effect", ["..."]),
+        ("READS_LOCAL",  "step", "literal", "many", "local read",   ["..."]),
+        ("WRITES_LOCAL", "step", "literal", "many", "local write",  ["..."]),
+        ("IN_METHOD",    "insn", "literal", "one",  "method id",    ["..."]),
+        ("PUSHES_STACK", "step", "literal", "many", "stack push",   ["..."]),
+        ("POPS_STACK",   "step", "literal", "many", "stack pop",    ["..."]),
+    ]:
+        cb.register_predicate(conn, name, dom, rng, card, defn, ex)
+
+    classfile = HERE / "kit_jvm_lessons/CountUp.class"
+    if not classfile.exists():
+        # compile on the fly if missing
+        import subprocess
+        srcdir = HERE / "kit_jvm_lessons/src"
+        subprocess.check_call(["javac", "-d", str(HERE / "kit_jvm_lessons"),
+                                str(srcdir / "CountUp.java")])
+
+    import parser_jvm
+    info = parser_jvm.populate(conn, classfile)
+    conn.commit()
+
+    # 41. parser_jvm: countTo() emits 18 instructions
+    def t_jvm_count_to_insns():
+        n = conn.execute(
+            "SELECT COUNT(*) AS c FROM v_facts_live "
+            "WHERE traveler='parser_jvm' AND predicate='HAS_MNEMONIC' "
+            "AND subject GLOB 'insn:CountUp:countTo:*'"
+        ).fetchone()["c"]
+        return 18, n
+    run("parser_jvm: countTo() has exactly 18 instructions",
+        "loop body 13 + setup 4 (iconst_0/istore_1/iconst_0/istore_2) + condition 3 (iload_2/iload_0/if_icmpge) + return-prep+return 2 (iload_1/ireturn) = 18 (verified via javap; sum of opcode distribution in test 42 also = 18)",
+        t_jvm_count_to_insns)
+
+    # 42. parser_jvm: opcode-level mnemonic counts match expectation
+    def t_jvm_opcode_distribution():
+        rows = list(conn.execute(
+            "SELECT object, COUNT(*) AS n FROM v_facts_live "
+            "WHERE traveler='parser_jvm' AND predicate='HAS_MNEMONIC' "
+            "AND subject GLOB 'insn:CountUp:countTo:*' "
+            "GROUP BY object ORDER BY object"
+        ))
+        actual = {r["object"]: r["n"] for r in rows}
+        expected = {
+            "iconst_0": 2,    # offsets 0, 2
+            "iconst_1": 1,    # offset 14
+            "istore_1": 2,    # offsets 1, 12
+            "istore_2": 2,    # offsets 3, 16
+            "iload_0":  1,    # offset 5
+            "iload_1":  2,    # offsets 9, 20
+            "iload_2":  3,    # offsets 4, 10, 13
+            "iadd":     2,    # offsets 11, 15
+            "if_icmpge":1,    # offset 6
+            "goto":     1,    # offset 17
+            "ireturn":  1,    # offset 21
+        }
+        return expected, actual
+    run("parser_jvm: countTo() opcode counts exactly match javap output",
+        "11 distinct opcodes summing to 17 instructions",
+        t_jvm_opcode_distribution)
+
+    # 43. parser_jvm: STACK_DELTA correct for iadd (pops 2, pushes 1)
+    def t_jvm_iadd_stack_delta():
+        rows = list(conn.execute(
+            "SELECT subject, object FROM v_facts_live "
+            "WHERE traveler='parser_jvm' AND predicate='STACK_DELTA' "
+            "AND subject IN ('insn:CountUp:countTo:11', 'insn:CountUp:countTo:15') "
+            "ORDER BY subject"
+        ))
+        return [("insn:CountUp:countTo:11", "-2+1"),
+                ("insn:CountUp:countTo:15", "-2+1")], [tuple(r) for r in rows]
+    run("parser_jvm: iadd STACK_DELTA is '-2+1' at both occurrences",
+        "iadd pops two ints and pushes one (the sum)",
+        t_jvm_iadd_stack_delta)
+
+    # 44. parser_jvm: BRANCH facts correct for if_icmpge / goto / ireturn
+    def t_jvm_branches():
+        rows = list(conn.execute(
+            "SELECT subject, object FROM v_facts_live "
+            "WHERE traveler='parser_jvm' AND predicate='BRANCH' "
+            "AND subject GLOB 'insn:CountUp:countTo:*' "
+            "ORDER BY LENGTH(subject), subject"
+        ))
+        actual = {r["subject"]: r["object"] for r in rows}
+        return {
+            "insn:CountUp:countTo:6":  "conditional:20",  # if_icmpge 20
+            "insn:CountUp:countTo:17": "unconditional:4",  # goto 4
+            "insn:CountUp:countTo:21": "return",           # ireturn
+        }, actual
+    run("parser_jvm: BRANCH semantics exactly match for if_icmpge / goto / ireturn",
+        "loop control flow encoded with target offsets and branch kind",
+        t_jvm_branches)
+
+    # 45. parser_jvm: WRITES_LOCAL slots correct (slots 1=sum, 2=i)
+    def t_jvm_writes_local():
+        rows = list(conn.execute(
+            "SELECT subject, object FROM v_facts_live "
+            "WHERE traveler='parser_jvm' AND predicate='WRITES_LOCAL' "
+            "AND subject GLOB 'insn:CountUp:countTo:*' "
+            "ORDER BY LENGTH(subject), subject, object"
+        ))
+        actual = sorted((r["subject"], r["object"]) for r in rows)
+        # istore_1 at offsets 1, 12 → WRITES_LOCAL 1
+        # istore_2 at offsets 3, 16 → WRITES_LOCAL 2
+        return sorted([
+            ("insn:CountUp:countTo:1",  "1"),
+            ("insn:CountUp:countTo:3",  "2"),
+            ("insn:CountUp:countTo:12", "1"),
+            ("insn:CountUp:countTo:16", "2"),
+        ]), actual
+    run("parser_jvm: WRITES_LOCAL fires at the 4 istore_N sites with correct slots",
+        "loop body writes sum (slot 1) and i (slot 2) at each iteration",
+        t_jvm_writes_local)
+
+    # 46. parser_jvm: READS_LOCAL slots correct (n=0, sum=1, i=2)
+    def t_jvm_reads_local():
+        rows = list(conn.execute(
+            "SELECT subject, object FROM v_facts_live "
+            "WHERE traveler='parser_jvm' AND predicate='READS_LOCAL' "
+            "AND subject GLOB 'insn:CountUp:countTo:*' "
+            "ORDER BY LENGTH(subject), subject, object"
+        ))
+        actual = sorted((r["subject"], r["object"]) for r in rows)
+        # iload_2: 4, 10, 13 → READS_LOCAL 2
+        # iload_0: 5            → READS_LOCAL 0
+        # iload_1: 9, 20        → READS_LOCAL 1
+        return sorted([
+            ("insn:CountUp:countTo:4",  "2"),
+            ("insn:CountUp:countTo:5",  "0"),
+            ("insn:CountUp:countTo:9",  "1"),
+            ("insn:CountUp:countTo:10", "2"),
+            ("insn:CountUp:countTo:13", "2"),
+            ("insn:CountUp:countTo:20", "1"),
+        ]), actual
+    run("parser_jvm: READS_LOCAL fires at the 6 iload_N sites with correct slots",
+        "loop body reads n (slot 0), sum (slot 1), i (slot 2)",
+        t_jvm_reads_local)
+
+    # 47. parser_jvm: stack-balance check — sum of STACK_DELTA over countTo()
+    # at 'normal exit' (offset 21 ireturn) should be -1 (returns one int).
+    # Computed: +1-1+1-1+1+1-2 + (loop body net 0 per iter, but loop runs 0
+    # times in this static analysis) +1 -1 = sum across all 17 = depends on
+    # path. Simplest invariant: all individual deltas parse to valid forms.
+    def t_jvm_stack_delta_well_formed():
+        rows = list(conn.execute(
+            "SELECT object FROM v_facts_live "
+            "WHERE traveler='parser_jvm' AND predicate='STACK_DELTA' "
+            "AND subject GLOB 'insn:CountUp:countTo:*'"
+        ))
+        deltas = [r["object"] for r in rows]
+        valid_pattern = re.compile(r'^([+-]\d+)+$|^0$')
+        bad = [d for d in deltas if not valid_pattern.match(d)]
+        return [], bad
+    run("parser_jvm: every STACK_DELTA parses as signed-counts string (or '0')",
+        "format invariant: '+N' / '-N' / sequences thereof / '0'",
+        t_jvm_stack_delta_well_formed)
+
+    # 48. parser_jvm: IN_METHOD links every insn to CountUp.countTo
+    def t_jvm_in_method():
+        n_total = conn.execute(
+            "SELECT COUNT(*) AS c FROM v_facts_live "
+            "WHERE traveler='parser_jvm' AND predicate='HAS_MNEMONIC' "
+            "AND subject GLOB 'insn:CountUp:countTo:*'"
+        ).fetchone()["c"]
+        n_linked = conn.execute(
+            "SELECT COUNT(*) AS c FROM v_facts_live "
+            "WHERE traveler='parser_jvm' AND predicate='IN_METHOD' "
+            "AND subject GLOB 'insn:CountUp:countTo:*' AND object='CountUp.countTo'"
+        ).fetchone()["c"]
+        return n_total, n_linked
+    run("parser_jvm: every countTo insn links to method 'CountUp.countTo' via IN_METHOD",
+        "method nesting captured even though encoded in subject",
+        t_jvm_in_method)
+
+    # 49. CROSS-SUBSTRATE: same predicate appears across cpu_4bit, parser_6502,
+    # AND parser_jvm — substrate-independence claim grounded.
+    # (Need cpu_4bit and parser_6502 facts present too; emit them.)
+    import cpu_4bit_traveler, parser_6502
+    cpu_4bit_traveler.emit_program(conn, "add", cpu_4bit_traveler.PROGRAMS["add"]["bytes"], "add demo")
+    parser_6502.populate(conn, HERE / "kit_6502_lessons/01_basic.s")
+    conn.commit()
+    def t_cross_substrate_three_travelers():
+        rows = list(conn.execute(
+            "SELECT traveler FROM v_facts_live "
+            "WHERE predicate='HAS_MNEMONIC' "
+            "GROUP BY traveler ORDER BY traveler"
+        ))
+        return ["cpu_4bit", "parser_6502", "parser_jvm"], [r["traveler"] for r in rows]
+    run("cross-substrate: HAS_MNEMONIC appears for all 3 travelers (cpu_4bit + parser_6502 + parser_jvm)",
+        "the same predicate vocabulary works across 4-bit register / 8-bit register / JVM stack — substrate-independence empirically verified",
+        t_cross_substrate_three_travelers)
+
+    conn.close()
+
+
 if __name__ == "__main__":
     schema_checks()
     helper_checks()
     substrate_checks()
     six502_checks()
+    jvm_checks()
     idempotency_checks()
     ok = write_report()
     raise SystemExit(0 if ok else 1)

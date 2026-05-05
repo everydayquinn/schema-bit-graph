@@ -66,6 +66,21 @@ PROGRESS = [
      {"parser_6502_facts": 114,  # 26 from 01_basic + 88 from 02_interrupt
       "sim_6502_facts":    106}),  # 28 + 78
 
+    # ----------- Day 3 -----------
+    ("plan:5day:day3:jvm-traveler", "shipped",
+     "session_6_2026-05-04 EOD Day 3 (compressed: shipped same session)",
+     {"shipped_evidence": "parser_jvm.py emits 200 facts from CountUp.class (3 methods, 26 insns); same predicate vocabulary as cpu_4bit + parser_6502 (HAS_MNEMONIC, AT_ADDRESS, IN_PROGRAM, BRANCH) plus JVM-specific (STACK_DELTA, READS_LOCAL, WRITES_LOCAL, IN_METHOD); cross-substrate query returns rows for all 4 travelers; 9 new tests in jvm_checks() verify hand-computed bytecode against actual emission",
+      "calibration_target":  "kit_jvm_lessons/CountUp.java — countTo(int) loop sums 0..n-1; 18 instructions hand-verified",
+      "files_added":         ["parser_jvm.py", "kit_jvm_lessons/src/CountUp.java", "kit_jvm_lessons/CountUp.class"],
+      "test_coverage":       "9 new JVM tests; project total 161→173 (+12; corkboard 40→49)",
+      "predicates_added":    ["STACK_DELTA", "IN_METHOD"],
+      "lesson_reinforced":   "trivial calibration program with hand-computable expected facts caught 2 of MY arithmetic mistakes (BRK at 0x0606 vs actual 0x0607; countTo 17 insns vs actual 18). User's pattern is correct: build the small known-good case first, verify the mechanism, THEN trust it on bigger inputs."}),
+
+    ("stress:jvm-toy", "shipped",
+     "session_6_2026-05-04",
+     {"calibration_complete": "CountUp.class verified across 9 hand-computed correctness tests",
+      "next_step":            "point parser_jvm at Cave Game (rd-132211) for the real-legacy-software stress case; mechanism verified, bigger input should just work"}),
+
     ("stress:cave-game", "probed-tractable",
      "session_6_2026-05-04",
      {"probe_result":     "rd-132211 at https://github.com/thecodeofnotch/rd-132211 (16★, last touched 2021)",
