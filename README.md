@@ -2,7 +2,7 @@
 
 A fact-store for source code. Every class, method, field, parameter, local, call, and type reference becomes a row you can `SELECT`. The relationships are computed at query time — there's no graph stored anywhere; the graph is whatever the SELECT just asked for.
 
-Self-taught, manual-labor background, three-month SQL course as my only formal training. I built a 4-bit CPU in SQL first ([schema-bit-cpu](https://github.com/everydayquinn/schema-bit-cpu) / [schema-bit-isa](https://github.com/everydayquinn/schema-bit-isa)) — the predicate vocabulary I picked there turned out to apply almost unchanged to a real Java codebase. This repo is what happened when I pointed it at one.
+The predicate vocabulary used here came out of a 4-bit CPU built in SQL first ([schema-bit-cpu](https://github.com/everydayquinn/schema-bit-cpu) / [schema-bit-isa](https://github.com/everydayquinn/schema-bit-isa)). It turned out to apply almost unchanged to a real Java codebase, so I pointed it at one.
 
 ## What's in here
 
