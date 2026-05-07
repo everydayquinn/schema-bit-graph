@@ -21,7 +21,8 @@ from datetime import datetime
 from pathlib import Path
 
 import corkboard as cb
-import cpu_4bit_traveler as t4
+# cpu_4bit_traveler import removed — that module now lives in schema-bit-cpu
+# / schema-bit-isa; substrate-level cross-tests for the 4-bit CPU live there.
 
 HERE       = Path(__file__).parent
 TEST_DB    = HERE / "test_corkboard.db"
@@ -1010,32 +1011,22 @@ def jvm_checks():
         "method nesting captured even though encoded in subject",
         t_jvm_in_method)
 
-    # 49. CROSS-SUBSTRATE: same predicate appears across cpu_4bit, parser_6502,
-    # AND parser_jvm — substrate-independence claim grounded.
-    # (Need cpu_4bit and parser_6502 facts present too; emit them.)
-    import cpu_4bit_traveler, parser_6502
-    cpu_4bit_traveler.emit_program(conn, "add", cpu_4bit_traveler.PROGRAMS["add"]["bytes"], "add demo")
-    parser_6502.populate(conn, HERE / "kit_6502_lessons/01_basic.s")
-    conn.commit()
-    def t_cross_substrate_three_travelers():
-        rows = list(conn.execute(
-            "SELECT traveler FROM v_facts_live "
-            "WHERE predicate='HAS_MNEMONIC' "
-            "GROUP BY traveler ORDER BY traveler"
-        ))
-        return ["cpu_4bit", "parser_6502", "parser_jvm"], [r["traveler"] for r in rows]
-    run("cross-substrate: HAS_MNEMONIC appears for all 3 travelers (cpu_4bit + parser_6502 + parser_jvm)",
-        "the same predicate vocabulary works across 4-bit register / 8-bit register / JVM stack — substrate-independence empirically verified",
-        t_cross_substrate_three_travelers)
+    # The original three-traveler cross-substrate check (cpu_4bit + parser_6502
+    # + parser_jvm) was removed during the repo split. The 4-bit and 6502
+    # cross-substrate demo now lives in schema-bit-isa; this repo verifies
+    # parser_jvm in isolation.
 
     conn.close()
 
 
 if __name__ == "__main__":
+    # substrate_checks() and six502_checks() removed in the repo split —
+    # they exercised cpu_4bit_traveler / parser_6502 / sim_6502, which now
+    # live in schema-bit-cpu and schema-bit-isa. The cork-board mechanics
+    # they tested are still exercised by schema_checks / helper_checks /
+    # idempotency_checks. parser_jvm is the one substrate that lives here.
     schema_checks()
     helper_checks()
-    substrate_checks()
-    six502_checks()
     jvm_checks()
     idempotency_checks()
     ok = write_report()

@@ -4,6 +4,10 @@
 *.db-wal
 *.db-shm
 
+# Generated test reports (timestamp-only churn)
+*_TEST_REPORT.md
+TEST_REPORT.md
+
 # Python
 __pycache__/
 *.pyc

@@ -1,29 +1,30 @@
 # schema-bit-graph
 
-Self-taught, manual-labor background, three-month SQL course as my only formal training. I wanted to know how a CPU actually works, so I built one in SQL. Then I wanted to see if the same approach could absorb a real codebase, so I indexed an 18-file open-source Java game.
+A fact-store for source code. Every class, method, field, parameter, local, call, and type reference becomes a row you can `SELECT`. The relationships are computed at query time — there's no graph stored anywhere; the graph is whatever the SELECT just asked for.
+
+Self-taught, manual-labor background, three-month SQL course as my only formal training. I built a 4-bit CPU in SQL first ([schema-bit-cpu](https://github.com/everydayquinn/schema-bit-cpu) / [schema-bit-isa](https://github.com/everydayquinn/schema-bit-isa)) — the predicate vocabulary I picked there turned out to apply almost unchanged to a real Java codebase. This repo is what happened when I pointed it at one.
 
 ## What's in here
 
-**A 4-bit CPU whose entire architecture lives in a SQLite database.** 13 opcodes, 21 control lines, microcode as rows in tables, registers and RAM as rows, every cycle of execution as a row. Python is the clock and the bus. SQL is everything else.
+**A static indexer for Java source** — `parser_java.py`. Walks `.java` files via the `javalang` AST and emits one row per class, method, field, parameter, local, call, and type reference. Indexes [cwalk/Cave-Game](https://github.com/cwalk/Cave-Game)'s 18 files (a 2D platformer) with zero parse failures, producing several thousand rows of structural facts.
 
-**A static indexer for Java source.** Walks `.java` files via the AST, emits one row per class, method, field, parameter, local, call, and type reference. Indexes `cwalk/Cave-Game`'s 18 files with zero parse failures, producing several thousand rows of structural facts.
+**A pattern detector** — `translator_java.py`. Sits on top of `parser_java`'s rows. Finds getters, setters, constants (with values), pure delegations, and trivial empty methods — *deterministically*, by behavior not by name. Catches `Batman.batBlock()` returning `batShield` even though the names don't match. ~200 patterns across the same 18 Cave Game files, no false positives in spot-checks.
 
-**A pattern detector that sits on top of the indexer.** Finds getters, setters, constants, pure delegations, and trivial empties — deterministically, by behavior not by name. 198 patterns across the same 18 files. Caught `Batman.batBlock()` returning `batShield` even though the names don't match.
+**A JVM bytecode parser** — `parser_jvm.py`. Reads `.class` files via `javap`. Same predicate vocabulary as the Java source side, applied to the compiled-bytecode layer.
 
-**A runtime tracer using the JVM's own `-Xlog:class+load`.** No code modification. Records which classes Cave Game actually loaded when run. Every class the static indexer claims exists also got loaded at runtime — the static picture and the runtime picture agree.
+**A runtime tracer** — `ingest_runtime.py`. Captures the JVM's own `-Xlog:class+load` output and turns each class load into a fact. No source modification; the JVM does the work, this just ingests. Lets you cross-query the static index against what actually loaded at runtime.
 
-All four sit in the same SQLite database. A query that joins static facts with runtime facts is one `SELECT`, not a pipeline.
+**A class-outline renderer** — `normalize_java.py`. One canned debugger-style view, built entirely from `SELECT`s against the fact-store. No parsing of its own.
 
-## Verifying the CPU
+All of this lives in a single SQLite database (`corkboard.db`). The fact-store enforces predicate registration, namespace gating, and explicit retraction through triggers — code can't insert facts using a predicate that hasn't been defined first.
 
-Tests written by the author against the author's own assumptions are not verification. The 4-bit CPU is verified by hand-tracing a 17-cycle countdown program against the microcode tables in [schema.sql](schema.sql), and by running 13 edge programs (ADD, underflow, AND, OR, XOR, NOT, JZ-taken/not-taken, JMP, STA-then-reload) against expected end-states worked out on paper.
+## Why a fact-store rather than reading source
 
-```
-python verify_cpu_4bit.py
-# all 13 edge programs match hand-computed expectations
-```
+A codebase is normally something you grep through. With this layout it's something you query — every relationship is a `JOIN`, every "where is X used" is a `WHERE`. The pattern detector compresses the boring 80% of any codebase (getters, setters, constants, delegations) into one row each, leaving the parts that actually need a person to think harder about clearly visible.
 
-I caught one of my own bugs writing the harness — an off-by-N in the test data layout. That's the failure mode this verification is designed to catch.
+It also means an AI assistant reading this codebase doesn't have to re-read source every session. It can query the fact-store. Same answers, computed instead of re-grokked, stable across sessions.
+
+The deeper claim, which holds for any relational database: **the relationships aren't stored — they're computed at query time.** A "table" of class-method-field structure isn't sitting somewhere in memory. The query asks the database to compute that view from the underlying tuples. Different SELECTs over the same rows give you different relations. That's what makes the same fact-store accept facts from a 4-bit register machine *and* JVM bytecode *and* Java source without modification — the predicates are tuples; the relations between them are functions.
 
 ## Reproducing it
 
@@ -32,36 +33,29 @@ git clone https://github.com/everydayquinn/schema-bit-graph
 cd schema-bit-graph
 pip install -r requirements.txt
 
-# fact-store + 4-bit CPU
-python verify_cpu_4bit.py
+# init the fact-store
 python seed_corkboard.py
-python cpu_4bit_traveler.py countdown
 
 # JVM bytecode parser on a calibration class
 javac -d kit_jvm_lessons kit_jvm_lessons/src/CountUp.java
 python parser_jvm.py kit_jvm_lessons/CountUp.class
 
-# real Java target (cwalk/Cave-Game)
+# the real Java target
 git clone --depth 1 https://github.com/cwalk/Cave-Game.git /tmp/cave-game-src
 ln -sf run_right.gif /tmp/cave-game-src/img/run_Right.gif    # case-fix for Linux
+
 python parser_java.py /tmp/cave-game-src/caveGame
 python translator_java.py /tmp/cave-game-src/caveGame
 
-# runtime trace — JVM's own class-load log
+# runtime trace — JVM's own class-load logging
 ( cd /tmp/cave-game-src && timeout 5 java -Xlog:class+load=info:file=/tmp/load.log -jar CAVE_V1.0.4.jar ) || true
 python ingest_runtime.py /tmp/load.log
+
+# render a class outline from the fact-store
+python normalize_java.py | head -30
 ```
 
-Then this query returns rows for both an in-house 4-bit register machine and a JVM stack machine, using the same predicate vocabulary on each:
-
-```sql
-SELECT traveler, predicate, COUNT(*) AS n
-FROM v_facts_live
-WHERE predicate IN ('HAS_MNEMONIC', 'BRANCH')
-GROUP BY traveler, predicate;
-```
-
-And this one asks which Cave Game classes the static index claims exist that the JVM didn't actually load:
+A query that takes the static index and the runtime log and asks where they disagree — *which classes the indexer claims exist that the JVM didn't actually load*:
 
 ```sql
 SELECT c.subject FROM v_facts_live c
@@ -73,19 +67,31 @@ WHERE c.traveler='parser_java' AND c.predicate='IS_KIND'
   );
 ```
 
-Returns zero for Cave Game. The static index lines up with what the JVM did at runtime.
+Returns zero rows for Cave Game. The static picture and the runtime picture agree.
 
-## Why this shape
+A query that asks which methods do the most drawing work, by counting Graphics2D calls:
 
-A codebase is normally something you grep through. I wanted it to be something you query — every class, method, and call as a row, the relationships computed at query time. The pattern detector compresses the boring 80% of any codebase (getters, setters, constants, delegations) into one row each, leaving the parts that actually need a person to think harder about clearly visible.
+```sql
+SELECT subject AS method, COUNT(*) AS draw_calls
+FROM v_facts_live
+WHERE traveler='parser_java' AND predicate='CALLS'
+  AND (object LIKE 'g2d.draw%' OR object LIKE 'g2d.fill%' OR object LIKE 'g2d.set%')
+GROUP BY subject
+ORDER BY draw_calls DESC LIMIT 5;
+```
 
-It also means an AI assistant reading this codebase doesn't have to re-read source files every session. It can query the fact-store. Same answers, computed instead of re-grokked.
+Returns the rendering hot-spots without ever opening a `.java` file.
 
 ## What's still open
 
-- The pattern detector handles canonical Java idioms. New patterns (state machines, observer/listener, etc.) require teaching it. The architecture takes additions without schema migration.
-- The runtime trace currently captures class-load events only. Per-object instance tracking would need a small JDWP client; not in scope for the current work.
-- The predicate vocabulary is generic enough to take facts from any other language with classes-and-methods (or whatever it has). I haven't tested that yet.
+- `translator_java`'s pattern set is the canonical Java boilerplate (getters, setters, constants, delegation, trivial). Larger patterns (state machines, listeners, observers, builder/visitor) require teaching it. The architecture takes additions without schema migration.
+- The runtime tracer captures class-load events. Per-object instance tracking needs a small JDWP client (the JVM's debug protocol); not in scope for the current work but the path is clear.
+- The predicate vocabulary is generic enough to take facts from any other language with classes-and-methods — Python, C#, etc. Untested, but no Java-specific assumptions in the schema.
+
+## Related repositories
+
+- [schema-bit-cpu](https://github.com/everydayquinn/schema-bit-cpu) — the 4-bit CPU as a self-contained artifact, where the predicate vocabulary used here originally took shape.
+- [schema-bit-isa](https://github.com/everydayquinn/schema-bit-isa) — the same 4-bit CPU plus a 6502 (py65), demonstrating the predicate vocabulary travels across ISA shapes.
 
 ## Contact
 
