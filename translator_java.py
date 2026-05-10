@@ -81,18 +81,37 @@ def bootstrap_vocab(conn):
 # ------------------------------------------------------------------
 # Pattern detectors
 # ------------------------------------------------------------------
+def _has_unary_ops(node) -> bool:
+    """True if node carries any prefix or postfix operators (e.g. -x, !x,
+    x++, --x). A pure field read has none of these — the operators
+    transform the value, breaking the 'equivalent to a direct field
+    read/write' contract that IS_GETTER_OF / IS_SETTER_OF claim."""
+    return bool(getattr(node, "prefix_operators", None) or
+                getattr(node, "postfix_operators", None))
+
+
 def _is_field_read(expr, class_name: str) -> str | None:
-    """If expr is `field` or `this.field`, return field name. Else None."""
+    """If expr is `field` or `this.field` with no unary operators applied
+    anywhere along the chain, return field name. Else None.
+
+    Rejects `-x`, `!this.x`, `x++`, etc. — those transform the value, so
+    the enclosing return/assignment is not equivalent to a plain read."""
+    if expr is None or _has_unary_ops(expr):
+        return None
     if isinstance(expr, javalang.tree.MemberReference):
         # qualifier=None means a bare name; this handles `return foo;`.
         # qualifier='this' would also hit but javalang typically uses This().
         if not expr.qualifier:
             return expr.member
     if isinstance(expr, javalang.tree.This):
-        # This().selectors[0].member would catch `this.foo` — handle below.
+        # This().selectors[0].member catches `this.foo`. The selector
+        # itself must also be plain (no `this.foo++` / etc.).
         sels = getattr(expr, "selectors", None) or []
         if len(sels) == 1 and isinstance(sels[0], javalang.tree.MemberReference):
-            return sels[0].member
+            inner = sels[0]
+            if _has_unary_ops(inner):
+                return None
+            return inner.member
     return None
 
 
@@ -131,9 +150,13 @@ def _detect_setter(m, class_name: str) -> str | None:
         return None
     if expr.type != "=":
         return None
-    # RHS must be a bare reference to the parameter
+    # RHS must be a bare reference to the parameter, with no unary ops
+    # (e.g., `this.x = -v` transforms the value before assignment, so it
+    # is NOT equivalent to a direct field write).
     rhs = expr.value
     if not isinstance(rhs, javalang.tree.MemberReference) or rhs.qualifier:
+        return None
+    if _has_unary_ops(rhs):
         return None
     if rhs.member != params[0].name:
         return None

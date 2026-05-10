@@ -19,6 +19,7 @@ Predicates emitted (registered idempotently on first run):
     BELONGS_TO, RETURNS_TYPE, HAS_PARAM, HAS_TYPE
     EXTENDS, IMPLEMENTS, IMPORTS_FROM
     CALLS, DECLARES_LOCAL, USES_TYPE
+    READS_FIELD, WRITES_FIELD, CALLED_BY
 
 Usage:
     python3 parser_java.py <FileOrDir.java> [corkboard.db]
@@ -126,6 +127,31 @@ PREDICATES = [
     ("USES_TYPE",       "method", "literal", "many",
      "A type referenced inside the method body (for joins / where-used).",
      ["method:CountUp.main USES_TYPE 'String'"]),
+
+    ("READS_FIELD",     "method", "ref",     "many",
+     "Method reads the named field of its enclosing class (or a super-field "
+     "shadowed-by-name resolution: only fields declared on the same class are "
+     "resolved). Compound assignments (+=, -=, etc.) emit both READS_FIELD "
+     "and WRITES_FIELD. Bare-name reads where a param/local shadows the "
+     "field are NOT emitted as field reads.",
+     ["method:Player.render READS_FIELD field:Player.isAlive",
+      "method:Player.render READS_FIELD field:Player.runSpeed"]),
+
+    ("WRITES_FIELD",    "method", "ref",     "many",
+     "Method writes the named field of its enclosing class. Includes simple "
+     "assignment (this.x = … or bare x = … when x is a field and not "
+     "shadowed) and the write side of compound assignment.",
+     ["method:Player.initPlayer WRITES_FIELD field:Player.name",
+      "method:Player.render WRITES_FIELD field:Player.x"]),
+
+    ("CALLED_BY",       "method", "ref",     "many",
+     "Inverse of CALLS, resolved to method subjects. Emitted in a post-pass "
+     "after all files are indexed: for each CALLS edge whose target's simple "
+     "name matches exactly one method definition known to the fact-store, "
+     "emit (callee CALLED_BY caller). Ambiguous matches (multiple methods "
+     "with the same simple name) are skipped, not emitted.",
+     ["method:Player.initPlayer CALLED_BY method:Player.Player",
+      "method:Player.getIcon CALLED_BY method:GameBoard.render"]),
 ]
 
 
@@ -189,10 +215,12 @@ def _emit_class(conn, rel_path: str, cls_node, kind: str):
         cb.emit(conn, TRAVELER, csubj, "IMPLEMENTS", _type_string(impl))
 
     # fields
+    field_names: set[str] = set()
     for f in (cls_node.fields or []):
         ftype = _type_string(f.type)
         for decl in f.declarators:
             fname = decl.name
+            field_names.add(fname)
             fsubj = f"field:{cname}.{fname}"
             cb.emit(conn, TRAVELER, fsubj, "HAS_NAME",   fname)
             cb.emit(conn, TRAVELER, fsubj, "BELONGS_TO", csubj, object_kind="ref")
@@ -204,14 +232,17 @@ def _emit_class(conn, rel_path: str, cls_node, kind: str):
 
     # methods
     for m in (cls_node.methods or []):
-        _emit_method(conn, rel_path, cname, m)
+        _emit_method(conn, rel_path, cname, m, field_names=field_names)
 
     # constructors are stored separately
     for ctor in (getattr(cls_node, "constructors", None) or []):
-        _emit_method(conn, rel_path, cname, ctor, ctor_name=cname)
+        _emit_method(conn, rel_path, cname, ctor,
+                     ctor_name=cname, field_names=field_names)
 
 
-def _emit_method(conn, rel_path: str, cname: str, m, ctor_name: str | None = None):
+def _emit_method(conn, rel_path: str, cname: str, m,
+                 ctor_name: str | None = None,
+                 field_names: set[str] | None = None):
     mname = ctor_name if ctor_name else m.name
     msubj = f"method:{cname}.{mname}"
     csubj = f"class:{cname}"
@@ -225,6 +256,7 @@ def _emit_method(conn, rel_path: str, cname: str, m, ctor_name: str | None = Non
         cb.emit(conn, TRAVELER, msubj, "HAS_MODIFIER", mod)
 
     # parameters
+    param_names: set[str] = set()
     for p in (m.parameters or []):
         psubj = f"param:{cname}.{mname}.{p.name}"
         ptype = _type_string(p.type)
@@ -232,11 +264,56 @@ def _emit_method(conn, rel_path: str, cname: str, m, ctor_name: str | None = Non
         cb.emit(conn, TRAVELER, psubj, "BELONGS_TO", msubj, object_kind="ref")
         cb.emit(conn, TRAVELER, psubj, "HAS_TYPE",   ptype)
         cb.emit(conn, TRAVELER, msubj, "HAS_PARAM",  psubj, object_kind="ref")
+        param_names.add(p.name)
 
-    # walk method body for locals, calls, type refs
+    # walk method body for locals, calls, type refs, field reads/writes
     body = getattr(m, "body", None) or []
+    fields = field_names or set()
     seen_types  = set()
     seen_locals = set()
+    local_names: set[str] = set()
+
+    # Pre-pass: collect local variable names so bare-name reads can be
+    # disambiguated against field names (locals/params shadow fields).
+    for node in _walk(body):
+        if isinstance(node, javalang.tree.LocalVariableDeclaration):
+            for d in node.declarators:
+                local_names.add(d.name)
+
+    shadowed = param_names | local_names
+
+    # Identify Assignment LHS nodes that resolve to a field write.
+    # We track id() of the LHS sub-expression so the read-walk can skip it.
+    write_lhs_ids: set[int] = set()
+    field_writes: list[str] = []      # field names written in this method
+    field_reads_compound: list[str] = []  # compound-assign also reads the LHS
+
+    for node in _walk(body):
+        if isinstance(node, javalang.tree.Assignment):
+            lhs = node.expressionl
+            fname = _resolve_field_lhs(lhs, fields, shadowed)
+            if fname is not None:
+                field_writes.append(fname)
+                write_lhs_ids.add(id(lhs))
+                if node.type and node.type != "=":
+                    field_reads_compound.append(fname)
+        elif isinstance(node, (javalang.tree.MemberReference, javalang.tree.This)):
+            # ++/-- prefix or postfix on a field reference is a read+write.
+            # The read side is captured by the regular read-walk; here we
+            # emit the write half. We must avoid double-counting: if the
+            # node is itself an Assignment LHS, it's already in write_lhs_ids
+            # and we skip.
+            ops = (getattr(node, "prefix_operators", None) or []) + \
+                  (getattr(node, "postfix_operators", None) or [])
+            if any(op in ("++", "--") for op in ops):
+                fname = _resolve_field_lhs(node, fields, shadowed)
+                if fname is not None and id(node) not in write_lhs_ids:
+                    field_writes.append(fname)
+
+    # Read-walk: every node that resolves to a field reference and was NOT
+    # the LHS of a simple assignment. Compound-LHS reads were captured above.
+    field_reads: list[str] = list(field_reads_compound)
+
     for node in _walk(body):
         if isinstance(node, javalang.tree.LocalVariableDeclaration):
             ltype = _type_string(node.type)
@@ -253,15 +330,64 @@ def _emit_method(conn, rel_path: str, cname: str, m, ctor_name: str | None = Non
                     seen_types.add(ltype)
                     cb.emit(conn, TRAVELER, msubj, "USES_TYPE", ltype)
         elif isinstance(node, javalang.tree.MethodInvocation):
-            # qualifier.member(args) -> 'qualifier.member' or just 'member'
             qual = getattr(node, "qualifier", None)
             target = f"{qual}.{node.member}" if qual else node.member
             cb.emit(conn, TRAVELER, msubj, "CALLS", target)
+            # `icon.foo()` reads field `icon` if `icon` resolves to one.
+            if qual:
+                head = qual.split(".", 1)[0]
+                if head in fields and head not in shadowed:
+                    field_reads.append(head)
         elif isinstance(node, javalang.tree.ReferenceType):
             tname = _type_string(node)
             if tname not in seen_types:
                 seen_types.add(tname)
                 cb.emit(conn, TRAVELER, msubj, "USES_TYPE", tname)
+        elif id(node) in write_lhs_ids:
+            # Already counted as a write; do not also emit a read for it.
+            continue
+        elif isinstance(node, javalang.tree.This):
+            sels = getattr(node, "selectors", None) or []
+            if sels and isinstance(sels[0], javalang.tree.MemberReference):
+                fn = sels[0].member
+                if fn in fields:
+                    field_reads.append(fn)
+        elif isinstance(node, javalang.tree.MemberReference):
+            # qualifier=='' is a bare reference; qualifier is None when this
+            # MemberReference is a selector-child of This/MemberReference and
+            # has already been accounted for via the parent.
+            qual = getattr(node, "qualifier", None)
+            if qual == "" and node.member in fields and node.member not in shadowed:
+                field_reads.append(node.member)
+
+    for fn in set(field_writes):
+        cb.emit(conn, TRAVELER, msubj, "WRITES_FIELD",
+                f"field:{cname}.{fn}", object_kind="ref")
+    for fn in set(field_reads):
+        cb.emit(conn, TRAVELER, msubj, "READS_FIELD",
+                f"field:{cname}.{fn}", object_kind="ref")
+
+
+def _resolve_field_lhs(lhs, fields: set[str], shadowed: set[str]) -> str | None:
+    """If `lhs` (an Assignment.expressionl) names a field of this class,
+    return the field name; else None.
+
+    Recognized shapes:
+      - This(selectors=[MemberReference(member=NAME), ...])  -> NAME
+      - MemberReference(qualifier='', member=NAME)           -> NAME (if not shadowed)
+    """
+    if isinstance(lhs, javalang.tree.This):
+        sels = getattr(lhs, "selectors", None) or []
+        if sels and isinstance(sels[0], javalang.tree.MemberReference):
+            mname = sels[0].member
+            if mname in fields:
+                return mname
+        return None
+    if isinstance(lhs, javalang.tree.MemberReference):
+        qual = getattr(lhs, "qualifier", None) or ""
+        if not qual and lhs.member in fields and lhs.member not in shadowed:
+            return lhs.member
+    return None
 
 
 def _walk(obj):
@@ -327,6 +453,57 @@ def index_file(conn, java_path: Path, repo_root: Path) -> int:
     return after - before
 
 
+def derive_called_by(conn) -> int:
+    """Post-pass: for each parser_java CALLS edge whose target's simple
+    name (last dotted segment) matches exactly one method:Class.method
+    subject in the fact-store, emit (callee CALLED_BY caller).
+
+    Ambiguity policy: if the simple name matches multiple method
+    definitions, skip — emitting all would create false edges; emitting
+    none preserves "no claim" honesty. Self-recursive calls within the
+    same class still emit.
+    """
+    rows = conn.execute("""
+        SELECT f.subject AS caller, f.object AS target
+          FROM facts f
+          JOIN predicates p ON p.id = f.predicate_id
+         WHERE p.name = 'CALLS'
+           AND f.traveler = ?
+           AND f.retracted_at IS NULL
+    """, (TRAVELER,)).fetchall()
+
+    method_subjects = [
+        r["subject"] for r in conn.execute("""
+            SELECT DISTINCT f.subject
+              FROM facts f
+              JOIN predicates p ON p.id = f.predicate_id
+             WHERE p.name = 'BELONGS_TO'
+               AND f.traveler = ?
+               AND f.retracted_at IS NULL
+               AND f.subject GLOB 'method:*'
+        """, (TRAVELER,)).fetchall()
+    ]
+
+    by_simple: dict[str, list[str]] = {}
+    for ms in method_subjects:
+        # method:ClassName.methodName -> simple = methodName
+        simple = ms.rsplit(".", 1)[-1]
+        by_simple.setdefault(simple, []).append(ms)
+
+    emitted = 0
+    for r in rows:
+        target = r["target"]
+        simple = target.rsplit(".", 1)[-1]
+        candidates = by_simple.get(simple, [])
+        if len(candidates) != 1:
+            continue
+        callee = candidates[0]
+        cb.emit(conn, TRAVELER, callee, "CALLED_BY",
+                r["caller"], object_kind="ref")
+        emitted += 1
+    return emitted
+
+
 def main(argv):
     if len(argv) < 2:
         print(__doc__)
@@ -356,6 +533,10 @@ def main(argv):
             print(f"  {_path_relative(f, repo_root):<60} parse error: {e}", file=sys.stderr)
         except Exception as e:
             print(f"  {_path_relative(f, repo_root):<60} error: {e}", file=sys.stderr)
+    conn.commit()
+
+    cb_count = derive_called_by(conn)
+    print(f"\nCALLED_BY edges (resolved by simple-name): {cb_count}")
     conn.commit()
 
     live = conn.execute(
