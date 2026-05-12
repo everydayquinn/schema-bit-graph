@@ -4,6 +4,33 @@ A fact-store for source code. Every class, method, field, parameter, local, call
 
 The predicate vocabulary used here came out of a 4-bit CPU built in SQL first ([schema-bit-cpu](https://github.com/everydayquinn/schema-bit-cpu) / [schema-bit-isa](https://github.com/everydayquinn/schema-bit-isa)). It turned out to apply almost unchanged to a real Java codebase, so I pointed it at one.
 
+## Shared Ontology Model
+
+This repo is one of five independent substrates that share a single **predicate vocabulary** recorded in a SQLite fact-store. They are not layers in an execution stack — none feeds another at runtime. The integration surface is the predicate ontology, not a pipeline.
+
+The five substrates:
+
+- [schema-bit-cpu](https://github.com/everydayquinn/schema-bit-cpu) — 4-bit register machine. Emits execution-trace facts (control-line firings, register/RAM mutations, T-states) into the shared predicate space. The substrate where the vocabulary first took shape.
+- [schema-bit-isa](https://github.com/everydayquinn/schema-bit-isa) — 4-bit + 6502 (py65) register machines. Emits normalized instruction-level facts; the vocabulary travels across two distinct ISAs.
+- [schema-bit-jvm](https://github.com/everydayquinn/schema-bit-jvm) — JVM bytecode (static, via `javap`) plus class-load runtime traces (via `-Xlog:class+load`). Stack-machine instruction facts and real-runtime observation facts.
+- [schema-bit-graph](https://github.com/everydayquinn/schema-bit-graph) *(this repo)* — Java source via `javalang` AST. Emits structural facts into the shared predicate space: classes, methods, fields, calls, type references.
+- [macro-schema-dsl](https://github.com/everydayquinn/macro-schema-dsl) — planned future *consumer* of the shared fact-store (query-driven code assembly into existing fact-indexed codebases). Stake in the ground; no code yet.
+
+**Shared predicate vocabulary** (representative): `HAS_MNEMONIC`, `BRANCH`, `MEM_WRITE`, `WRITES_REG`, `AT_ADDRESS`, `IN_PROGRAM`, `INTERRUPT`, `CYCLES`, plus stack-machine specifics (`STACK_DELTA`, `READS_LOCAL`, `WRITES_LOCAL`) and source-side ones (`CALLS`, `READS_FIELD`, `IS_KIND`, `WAS_LOADED`).
+
+**What the shared ontology buys you.** A cross-substrate query like
+
+```sql
+SELECT traveler, predicate, COUNT(*) AS n
+FROM v_facts_live
+WHERE predicate IN ('HAS_MNEMONIC','BRANCH','MEM_WRITE')
+GROUP BY traveler, predicate;
+```
+
+returns rows from a 4-bit register machine, a 6502, JVM bytecode, and Java source — without modification. The substrate doesn't care; the relations are computed at query time.
+
+This repo is a **substrate-specific emitter** of facts into that shared ontology. It is not part of an execution stack — the siblings above are siblings, not layers.
+
 ## What's in here
 
 **A static indexer for Java source** — `parser_java.py`. Walks `.java` files via the `javalang` AST and emits one row per class, method, field, parameter, local, call, and type reference. Indexes [cwalk/Cave-Game](https://github.com/cwalk/Cave-Game)'s 18 files (a 2D platformer) with zero parse failures, producing several thousand rows of structural facts.
@@ -15,7 +42,7 @@ The predicate vocabulary used here came out of a 4-bit CPU built in SQL first ([
 The JVM-bytecode and class-load-runtime side of the same story moved out
 to its own repo:
 [schema-bit-jvm](https://github.com/everydayquinn/schema-bit-jvm).
-Same predicate vocabulary; different layer.
+Same predicate vocabulary; different substrate (compiled bytecode vs Java source).
 
 All of this lives in a single SQLite database (`corkboard.db`). The fact-store enforces predicate registration, namespace gating, and explicit retraction through triggers — code can't insert facts using a predicate that hasn't been defined first.
 
