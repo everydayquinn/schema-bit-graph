@@ -4,24 +4,31 @@ A fact-store for source code. Every class, method, field, parameter, local, call
 
 The predicate vocabulary used here came out of a 4-bit CPU built in SQL first ([schema-bit-cpu](https://github.com/everydayquinn/schema-bit-cpu) / [schema-bit-isa](https://github.com/everydayquinn/schema-bit-isa)). It turned out to apply almost unchanged to a real Java codebase, so I pointed it at one.
 
-## What this experiment explores
+## What this repository does
 
-Representing Java source structure as queryable rows in SQLite. A static indexer walks `.java` files via the `javalang` AST and writes one row per class, method, field, parameter, local, call, and type reference. A separate pattern detector sits on top of those rows and flags mechanical patterns — getters, setters, constants, pure delegations, trivial empties — deterministically, by behavior rather than name.
+Parses Java source files via `javalang` and writes the AST structure into SQLite rows. A separate pattern detector runs against those rows and flags mechanical patterns — getters, setters, constants, pure delegations, trivial empties — deterministically, by behavior rather than by name.
 
-**What this repo produces.** A SQLite database (`corkboard.db`) with structural rows under `parser_java` and pattern rows under `translator_java`. The working example is cwalk's Cave Game corpus: ~thousands of structural rows and ~200 pattern matches with no parse failures across 18 files.
+## What it produces
 
-**How to query it.** Standard SQLite. Example queries in this README cover ranking methods by `Graphics2D` call count to find rendering hot-spots, building a class outline from `SELECT`s alone, and joining structural and pattern rows.
+A SQLite database (`corkboard.db`) with:
+
+- structural rows under `parser_java` — one row per class, method, field, parameter, local, call, and type reference
+- pattern rows under `translator_java` — one row per detected mechanical pattern
+
+The working example is cwalk's Cave Game corpus: thousands of structural rows and ~200 pattern matches across 18 files.
+
+## What it explores
+
+AST-based structural extraction: turning Java source into rows so a codebase becomes something you query rather than grep. Each structural element is a row; each relationship is computed at query time via `JOIN`.
 
 ## Relation to other repositories
 
-The other repos in this account — `schema-bit-cpu`, `schema-bit-isa`, `schema-bit-jvm`, `macro-schema-dsl` — are independent experiments that also log or analyze some view of computation into SQLite.
+This repository is independent. It does not depend on or execute other repositories.
 
-The similarity is limited to:
+The other repos in this account — `schema-bit-cpu`, `schema-bit-isa`, `schema-bit-jvm`, `macro-schema-dsl` — are independent experiments that also store some view of computation in SQLite. The similarity is limited to:
 
-- they all use SQLite as the storage format
-- some use similar column names where the same concept fits (e.g. `predicate`, `subject`, `object`, `traveler`)
-
-There is **no shared architecture**. There is **no execution relationship between repos** — none calls or invokes another, none depends on another at runtime. They are different lenses on computation that happen to converge on SQLite as the storage shape.
+- shared use of SQLite as the storage format
+- overlap in column names where the same concept happens to fit (e.g. `predicate`, `subject`, `object`, `traveler`)
 
 ## What's in here
 
