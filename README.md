@@ -4,6 +4,32 @@ A fact-store for source code. Every class, method, field, parameter, local, call
 
 The predicate vocabulary used here came out of a 4-bit CPU built in SQL first ([schema-bit-cpu](https://github.com/everydayquinn/schema-bit-cpu) / [schema-bit-isa](https://github.com/everydayquinn/schema-bit-isa)). It turned out to apply almost unchanged to a real Java codebase, so I pointed it at one.
 
+## What this repository does
+
+Parses Java source files via `javalang` and writes the AST structure into SQLite rows. A separate pattern detector runs against those rows and flags mechanical patterns — getters, setters, constants, pure delegations, trivial empties — deterministically, by behavior rather than by name.
+
+## What it produces
+
+A SQLite database (`corkboard.db`) with:
+
+- structural rows under `parser_java` — one row per class, method, field, parameter, local, call, and type reference
+- pattern rows under `translator_java` — one row per detected mechanical pattern
+
+The working example is cwalk's Cave Game corpus: thousands of structural rows and ~200 pattern matches across 18 files.
+
+## What it explores
+
+AST-based structural extraction: turning Java source into rows so a codebase becomes something you query rather than grep. Each structural element is a row; each relationship is computed at query time via `JOIN`.
+
+## Relation to other repositories
+
+This repository is independent. It does not depend on or execute other repositories.
+
+The other repos in this account — `schema-bit-cpu`, `schema-bit-isa`, `schema-bit-jvm`, `macro-schema-dsl` — are independent experiments that also store some view of computation in SQLite. The similarity is limited to:
+
+- shared use of SQLite as the storage format
+- overlap in column names where the same concept happens to fit (e.g. `predicate`, `subject`, `object`, `traveler`)
+
 ## What's in here
 
 **A static indexer for Java source** — `parser_java.py`. Walks `.java` files via the `javalang` AST and emits one row per class, method, field, parameter, local, call, and type reference. Indexes [cwalk/Cave-Game](https://github.com/cwalk/Cave-Game)'s 18 files (a 2D platformer) with zero parse failures, producing several thousand rows of structural facts.
